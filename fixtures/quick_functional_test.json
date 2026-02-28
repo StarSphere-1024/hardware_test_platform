@@ -1,5 +1,5 @@
 {
-  "fixture_name": "功能快速验证",
+  "fixture_name": "quick_functional_test",
   "description": "Quick functional verification for R&D - basic connectivity tests",
   "cases": [
     "cases/eth_case.json",

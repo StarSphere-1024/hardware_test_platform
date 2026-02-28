@@ -1,5 +1,5 @@
 {
-  "fixture_name": "网络功能测试",
+  "fixture_name": "network_test",
   "description": "Network connectivity tests only",
   "cases": [
     "cases/eth_case.json"

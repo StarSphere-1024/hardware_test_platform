@@ -1,5 +1,5 @@
 {
-  "fixture_name": "生产全功能测试",
+  "fixture_name": "production_full_test",
   "description": "Production full function test - all modules verification",
   "sn_required": true,
   "cases": [
