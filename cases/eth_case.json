@@ -6,7 +6,7 @@
     {
       "name": "test_eth",
       "params": {
-        "ip": "192.168.1.1",
+        "ip": "192.168.100.1",
         "count": 4
       },
       "enabled": true
@@ -14,9 +14,8 @@
     {
       "name": "test_eth",
       "params": {
-        "ip": "192.168.1.1",
-        "iperf3": false,
-        "count": 10
+        "ip": "8.8.8.8",
+        "count": 4
       },
       "enabled": true
     }
