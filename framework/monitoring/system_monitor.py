@@ -183,6 +183,21 @@ class SystemMonitor:
 
             if values_mhz:
                 return round(sum(values_mhz) / len(values_mhz), 1)
+
+            # Method 3: /proc/cpuinfo (Linux)
+            cpuinfo_file = Path("/proc/cpuinfo")
+            if cpuinfo_file.exists():
+                values = []
+                with open(cpuinfo_file, "r", encoding="utf-8", errors="ignore") as file_obj:
+                    for line in file_obj:
+                        if line.lower().startswith("cpu mhz"):
+                            try:
+                                mhz = float(line.split(":", 1)[1].strip())
+                                values.append(mhz)
+                            except (ValueError, IndexError):
+                                continue
+                if values:
+                    return round(sum(values) / len(values), 1)
         except Exception:
             pass
 
