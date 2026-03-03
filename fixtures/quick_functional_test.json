@@ -12,6 +12,6 @@
   "loop_interval": 0,
   "retry": 1,
   "retry_interval": 3,
-  "report_enabled": false,
+  "report_enabled": true,
   "sn_required": false
 }

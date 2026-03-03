@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 
 from .case_runner import CaseRunner, CaseResult
 from .result_store import ResultStore
+from framework.logging import Logger, ReportGenerator
 
 # Optional monitoring import
 try:
@@ -93,6 +94,60 @@ class FixtureRunner:
         self.fixtures_dir = Path(fixtures_dir)
         self.case_runner = CaseRunner(functions_dir, cases_dir)
         self.result_store = ResultStore()
+        self.logger = Logger("fixture_runner", level=Logger.LEVEL_BASIC)
+        self.report_generator = ReportGenerator()
+
+    def _load_global_config(self) -> Dict[str, Any]:
+        """Load global configuration for report metadata.
+
+        加载全局配置用于报告元数据
+        """
+        config_path = Path("config/global_config.json")
+        if not config_path.exists():
+            return {}
+
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return {}
+
+    def _write_report(
+        self,
+        fixture_result: FixtureResult,
+        fixture_config: Dict[str, Any],
+        sn: Optional[str] = None,
+    ) -> Optional[Path]:
+        """Generate production-grade fixture report artifacts.
+
+        生成生产级 fixture 报告产物
+        """
+        if not fixture_config.get("report_enabled", False):
+            return None
+
+        global_config = self._load_global_config()
+
+        try:
+            artifact = self.report_generator.generate(
+                fixture_result=fixture_result,
+                fixture_config=fixture_config,
+                global_config=global_config,
+                sn=sn,
+            )
+            self.logger.info(
+                "Fixture report generated",
+                text_report=str(artifact.text_report_path),
+                json_report=str(artifact.json_report_path),
+            )
+            return artifact.text_report_path
+        except Exception as e:
+            # Report generation failure should not block test pipeline.
+            self.logger.error(
+                "Report generation failed",
+                fixture=fixture_result.fixture_name,
+                error=str(e),
+            )
+            return None
 
     def load_fixture(self, fixture_name: str) -> Optional[Dict[str, Any]]:
         """
@@ -230,7 +285,7 @@ class FixtureRunner:
         else:
             overall_status = "partial"
 
-        return FixtureResult(
+        fixture_result = FixtureResult(
             fixture_name=fixture_name,
             status=overall_status,
             duration=duration,
@@ -240,6 +295,10 @@ class FixtureRunner:
             total_fail=total_fail,
             error=last_error,
         )
+
+        self._write_report(fixture_result, fixture_config, sn=sn)
+
+        return fixture_result
 
     def run_by_name(
         self,

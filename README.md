@@ -96,7 +96,8 @@ hardware_test_platform/
 │   │   ├── base_adapter.py
 │   │   └── linux_adapter.py
 │   ├── logging/            # Logging system
-│   │   └── logger.py
+│   │   ├── logger.py
+│   │   └── report_generator.py
 │   └── dashboard/          # CLI dashboard
 │       └── cli_dashboard.py
 ├── functions/              # Test functions
@@ -178,9 +179,27 @@ hardware_test_platform/
   "cases": ["cases/eth_case.json"],
   "execution": "sequential",
   "stop_on_failure": false,
-  "retry": 1
+  "retry": 1,
+  "report_enabled": true
 }
 ```
+
+## Report Artifacts
+
+When `report_enabled` is set to `true` in fixture config, the framework now generates two report artifacts in `reports/`:
+
+- `*.report`: human-readable report for EE/TE triage
+- `*.report.json`: structured report for dashboards, parsing, and CI archiving
+
+Filename convention:
+
+- `{SKU}_{SN|STAGE}_{YYYYMMDD_HHMMSS}_{pass|fail}.report`
+- `{SKU}_{SN|STAGE}_{YYYYMMDD_HHMMSS}_{pass|fail}.report.json`
+
+Notes:
+
+- Partial fixture results are classified as `fail` in filename for production traceability.
+- Report generation uses atomic write and does not block fixture execution if reporting fails.
 
 ## Development
 
