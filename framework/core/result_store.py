@@ -36,6 +36,7 @@ class TestResult:
     duration: float                       # Duration in seconds
     retry_count: int = 0                  # Number of retries
     platform: str = "linux"               # Platform identifier
+    resolved_context: Optional[Dict[str, Any]] = None  # Auto-selected interfaces
     details: Optional[Dict[str, Any]] = None  # Additional details
     error: Optional[str] = None           # Error message if failed
 
@@ -61,6 +62,7 @@ class TestResult:
         case_name: str,
         duration: float,
         details: Optional[Dict[str, Any]] = None,
+        resolved_context: Optional[Dict[str, Any]] = None,
     ) -> "TestResult":
         """Create a 'pass' status result."""
         return cls(
@@ -70,6 +72,7 @@ class TestResult:
             timestamp=datetime.now().isoformat(timespec="seconds"),
             duration=duration,
             details=details or {},
+            resolved_context=resolved_context,
         )
 
     @classmethod
@@ -80,6 +83,7 @@ class TestResult:
         duration: float,
         error: str,
         retry_count: int = 0,
+        resolved_context: Optional[Dict[str, Any]] = None,
     ) -> "TestResult":
         """Create a 'fail' status result."""
         return cls(
@@ -90,6 +94,7 @@ class TestResult:
             duration=duration,
             retry_count=retry_count,
             error=error,
+            resolved_context=resolved_context,
         )
 
 
@@ -241,9 +246,10 @@ class ResultStore:
         case_name: str,
         duration: float,
         details: Optional[Dict[str, Any]] = None,
+        resolved_context: Optional[Dict[str, Any]] = None,
     ) -> Path:
         """Write a 'pass' result."""
-        result = TestResult.success(module, case_name, duration, details)
+        result = TestResult.success(module, case_name, duration, details, resolved_context)
         return self.write(result)
 
     def write_failure(
@@ -253,9 +259,10 @@ class ResultStore:
         duration: float,
         error: str,
         retry_count: int = 0,
+        resolved_context: Optional[Dict[str, Any]] = None,
     ) -> Path:
         """Write a 'fail' result."""
-        result = TestResult.failure(module, case_name, duration, error, retry_count)
+        result = TestResult.failure(module, case_name, duration, error, retry_count, resolved_context)
         return self.write(result)
 
 

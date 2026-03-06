@@ -2,6 +2,13 @@
   "case_name": "I2C Bus Scan",
   "description": "扫描所有 I2C 总线数量和每条总线上的设备",
   "module": "i2c",
+  "precheck": true,
+  "required_interfaces": {
+    "i2c": {
+      "select": "auto",
+      "required": true
+    }
+  },
   "functions": [
     {
       "name": "test_i2c",

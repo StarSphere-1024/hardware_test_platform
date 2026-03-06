@@ -5,6 +5,36 @@ REMOTE_HOST="${REMOTE_HOST:-192.168.100.91}"
 REMOTE_USER="${REMOTE_USER:-seeed}"
 REMOTE_PASS="${REMOTE_PASS:-seeed}"
 REMOTE_DIR="${REMOTE_DIR:-/home/seeed/hardware_test}"
+AS_ROOT=false
+
+usage() {
+  echo "Usage: $0 [--host H] [--user U] [--password P] [--remote-dir D] [--as-root]"
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --host)
+      REMOTE_HOST="$2"; shift 2 ;;
+    --user)
+      REMOTE_USER="$2"; shift 2 ;;
+    --password|--pass)
+      REMOTE_PASS="$2"; shift 2 ;;
+    --remote-dir)
+      REMOTE_DIR="$2"; shift 2 ;;
+    --as-root)
+      AS_ROOT=true; shift ;;
+    -h|--help)
+      usage; exit 0 ;;
+    *)
+      echo "[ERROR] Unexpected argument: $1"
+      usage
+      exit 1 ;;
+  esac
+done
+
+if [[ "$AS_ROOT" == true ]]; then
+  REMOTE_USER="root"
+fi
 
 if ! command -v sshpass >/dev/null 2>&1; then
   echo "[ERROR] sshpass 未安装"

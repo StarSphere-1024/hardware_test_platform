@@ -9,6 +9,7 @@ Function Runner - 执行单个测试函数
 """
 
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -71,6 +72,176 @@ class FunctionRunner:
         """
         self.functions_dir = Path(functions_dir)
         self._loaded_functions: Dict[str, Callable] = {}
+
+    def _find_function_script(self, name: str) -> Optional[Path]:
+        """Find python script file for function name."""
+        for module_dir in self.functions_dir.iterdir():
+            if not module_dir.is_dir():
+                continue
+            candidate = module_dir / f"{name}.py"
+            if candidate.exists():
+                return candidate
+        return None
+
+    def _supports_cli_execution(self, script_path: Path) -> bool:
+        """Check whether a function script exposes argparse-based CLI entrypoint."""
+        try:
+            content = script_path.read_text(encoding="utf-8")
+        except Exception:
+            return False
+        return "if __name__ == \"__main__\"" in content and "argparse.ArgumentParser" in content
+
+    def _params_to_cli_args(self, params: Dict[str, Any]) -> List[str]:
+        """Convert dict params to long-form CLI args.
+
+        Example:
+            {"ip": "1.1.1.1", "enable": True} -> ["--ip", "1.1.1.1", "--enable"]
+        """
+        args: List[str] = []
+        for key, value in params.items():
+            normalized_key = key.replace("_", "-")
+            option = f"--{normalized_key}"
+
+            if isinstance(value, bool):
+                if value:
+                    args.append(option)
+                continue
+
+            if value is None:
+                continue
+
+            if isinstance(value, list):
+                for item in value:
+                    args.extend([option, str(item)])
+                continue
+
+            args.extend([option, str(value)])
+        return args
+
+    def _run_via_cli(
+        self,
+        script_path: Path,
+        name: str,
+        params: Dict[str, Any],
+        timeout: Optional[int],
+        start_time: float,
+    ) -> FunctionResult:
+        """Run function script as CLI process."""
+        cli_args = self._params_to_cli_args(params)
+        command = [sys.executable, str(script_path), *cli_args]
+
+        try:
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return FunctionResult(
+                name=name,
+                code=StatusCode.TIMEOUT,
+                message=f"Function '{name}' timed out after {timeout}s",
+                duration=time.time() - start_time,
+                details={"mode": "cli", "args": cli_args},
+            )
+        except Exception as e:
+            return FunctionResult(
+                name=name,
+                code=StatusCode.FAILED,
+                message=f"Function '{name}' failed: {e}",
+                duration=time.time() - start_time,
+                details={"mode": "cli", "args": cli_args},
+            )
+
+        return_code = completed.returncode
+        normalized_code = return_code - 256 if return_code > 127 else return_code
+        output_message = (completed.stdout or completed.stderr or "").strip().splitlines()
+        message = output_message[-1] if output_message else (
+            "Success" if normalized_code == 0 else f"CLI exited with code {normalized_code}"
+        )
+
+        return FunctionResult(
+            name=name,
+            code=normalized_code,
+            message=message,
+            duration=time.time() - start_time,
+            details={
+                "mode": "cli",
+                "args": cli_args,
+                "stdout": (completed.stdout or "").strip(),
+                "stderr": (completed.stderr or "").strip(),
+            },
+        )
+
+    def _run_via_import(
+        self,
+        func: Callable,
+        name: str,
+        params: Dict[str, Any],
+        timeout: Optional[int],
+        start_time: float,
+    ) -> FunctionResult:
+        """Run function by python import call (compatibility fallback)."""
+        try:
+            sig = inspect.signature(func)
+            required_params = {
+                p_name
+                for p_name, param in sig.parameters.items()
+                if param.default is inspect.Parameter.empty
+                and p_name != "kwargs"
+            }
+
+            missing = required_params - set(params.keys())
+            if missing:
+                return FunctionResult(
+                    name=name,
+                    code=StatusCode.MISSING_PARAM,
+                    message=f"Missing required parameters: {missing}",
+                    duration=time.time() - start_time,
+                )
+        except Exception:
+            pass
+
+        try:
+            if timeout:
+                result = self._run_with_timeout(func, params, timeout)
+            else:
+                result = func(**params)
+
+            if isinstance(result, int):
+                code = result
+                message = StatusCode(code).description
+            elif isinstance(result, dict):
+                code = result.get("code", StatusCode.SUCCESS)
+                message = result.get("message", StatusCode(code).description)
+            else:
+                code = StatusCode.SUCCESS
+                message = "Success"
+
+            return FunctionResult(
+                name=name,
+                code=code,
+                message=message,
+                duration=time.time() - start_time,
+                details=result if isinstance(result, dict) else None,
+            )
+
+        except subprocess.TimeoutExpired:
+            return FunctionResult(
+                name=name,
+                code=StatusCode.TIMEOUT,
+                message=f"Function '{name}' timed out after {timeout}s",
+                duration=time.time() - start_time,
+            )
+        except Exception as e:
+            return FunctionResult(
+                name=name,
+                code=StatusCode.FAILED,
+                message=f"Function '{name}' failed: {e}",
+                duration=time.time() - start_time,
+            )
 
     def load_function(self, name: str) -> Optional[Callable]:
         """
@@ -138,6 +309,10 @@ class FunctionRunner:
         start_time = time.time()
         params = params or {}
 
+        script_path = self._find_function_script(name)
+        if script_path and self._supports_cli_execution(script_path):
+            return self._run_via_cli(script_path, name, params, timeout, start_time)
+
         # Load the function
         func = self.load_function(name)
         if not func:
@@ -148,68 +323,7 @@ class FunctionRunner:
                 duration=time.time() - start_time,
             )
 
-        # Validate parameters
-        try:
-            sig = inspect.signature(func)
-            required_params = {
-                p_name
-                for p_name, param in sig.parameters.items()
-                if param.default is inspect.Parameter.empty
-                and p_name != "kwargs"
-            }
-
-            missing = required_params - set(params.keys())
-            if missing:
-                return FunctionResult(
-                    name=name,
-                    code=StatusCode.MISSING_PARAM,
-                    message=f"Missing required parameters: {missing}",
-                    duration=time.time() - start_time,
-                )
-        except Exception:
-            pass  # Skip validation if signature inspection fails
-
-        # Execute the function
-        try:
-            # Handle timeout using subprocess if specified
-            if timeout:
-                result = self._run_with_timeout(func, params, timeout)
-            else:
-                result = func(**params)
-
-            # Parse result
-            if isinstance(result, int):
-                code = result
-                message = StatusCode(code).description
-            elif isinstance(result, dict):
-                code = result.get("code", StatusCode.SUCCESS)
-                message = result.get("message", StatusCode(code).description)
-            else:
-                code = StatusCode.SUCCESS
-                message = "Success"
-
-            return FunctionResult(
-                name=name,
-                code=code,
-                message=message,
-                duration=time.time() - start_time,
-                details=result if isinstance(result, dict) else None,
-            )
-
-        except subprocess.TimeoutExpired:
-            return FunctionResult(
-                name=name,
-                code=StatusCode.TIMEOUT,
-                message=f"Function '{name}' timed out after {timeout}s",
-                duration=time.time() - start_time,
-            )
-        except Exception as e:
-            return FunctionResult(
-                name=name,
-                code=StatusCode.FAILED,
-                message=f"Function '{name}' failed: {e}",
-                duration=time.time() - start_time,
-            )
+        return self._run_via_import(func, name, params, timeout, start_time)
 
     def _run_with_timeout(
         self,

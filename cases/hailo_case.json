@@ -2,6 +2,7 @@
   "case_name": "Hailo 8 Accelerator Test",
   "description": "Hailo 8 AI 加速棒检测和推理测试",
   "module": "hailo",
+  "precheck": true,
   "functions": [
     {
       "name": "test_hailo",

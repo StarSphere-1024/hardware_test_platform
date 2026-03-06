@@ -5,9 +5,46 @@ REMOTE_HOST="${REMOTE_HOST:-192.168.100.91}"
 REMOTE_USER="${REMOTE_USER:-seeed}"
 REMOTE_PASS="${REMOTE_PASS:-seeed}"
 REMOTE_DIR="${REMOTE_DIR:-/home/seeed/hardware_test}"
+BOARD_PROFILE_NAME="${BOARD_PROFILE:-${REMOTE_BOARD_PROFILE:-}}"
+AS_ROOT=false
 
-FIXTURE_NAME="${1:-rk3576_full_test}"
-SN="${2:-}"
+usage() {
+  echo "Usage: $0 [--host H] [--user U] [--password P] [--remote-dir D] [--board-profile B] [--as-root] [fixture-name|fixture-path] [sn]"
+  echo "Examples:"
+  echo "  $0 rk3576_full_test"
+  echo "  $0 --user seeed --password seeed rk3576_full_test"
+  echo "  $0 --as-root rk3576_full_test"
+}
+
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --host)
+      REMOTE_HOST="$2"; shift 2 ;;
+    --user)
+      REMOTE_USER="$2"; shift 2 ;;
+    --password|--pass)
+      REMOTE_PASS="$2"; shift 2 ;;
+    --remote-dir)
+      REMOTE_DIR="$2"; shift 2 ;;
+    --board-profile)
+      BOARD_PROFILE_NAME="$2"; shift 2 ;;
+    --as-root)
+      AS_ROOT=true; shift ;;
+    -h|--help)
+      usage; exit 0 ;;
+    *)
+      POSITIONAL+=("$1")
+      shift ;;
+  esac
+done
+
+if [[ "$AS_ROOT" == true ]]; then
+  REMOTE_USER="root"
+fi
+
+FIXTURE_NAME="${POSITIONAL[0]:-rk3576_full_test}"
+SN="${POSITIONAL[1]:-}"
 
 if [[ "$FIXTURE_NAME" == *.json ]]; then
   FIXTURE_PATH="$FIXTURE_NAME"
@@ -22,7 +59,11 @@ if ! command -v sshpass >/dev/null 2>&1; then
   exit 2
 fi
 
-RUN_CMD="venv/bin/run_fixture '$FIXTURE_PATH'"
+BOARD_PROFILE_CMD=""
+if [[ -n "$BOARD_PROFILE_NAME" ]]; then
+  BOARD_PROFILE_CMD="BOARD_PROFILE='$BOARD_PROFILE_NAME' "
+fi
+RUN_CMD="${BOARD_PROFILE_CMD}PYTHONPATH='$REMOTE_DIR' venv/bin/run_fixture '$FIXTURE_PATH'"
 
 echo "[INFO] 执行全功能 fixture: ${FIXTURE_PATH}"
 sshpass -p "$REMOTE_PASS" ssh -o StrictHostKeyChecking=no "$REMOTE_USER@$REMOTE_HOST" \
@@ -33,6 +74,10 @@ sshpass -p "$REMOTE_PASS" ssh -o StrictHostKeyChecking=no "$REMOTE_USER@$REMOTE_
 set -e
 cd '$REMOTE_DIR'
 source venv/bin/activate
+if [[ -n "$BOARD_PROFILE_NAME" ]]; then
+export BOARD_PROFILE='$BOARD_PROFILE_NAME'
+fi
+export PYTHONPATH='$REMOTE_DIR'
 python - <<'PY'
 from framework.dashboard.cli_dashboard import CLIDashboard
 

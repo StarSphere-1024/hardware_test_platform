@@ -2,6 +2,7 @@
   "case_name": "DSI Display Test",
   "description": "MIPI DSI 屏幕检测和显示输出测试",
   "module": "dsi",
+  "precheck": true,
   "functions": [
     {
       "name": "test_dsi",

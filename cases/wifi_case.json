@@ -2,12 +2,20 @@
   "case_name": "WiFi Test",
   "description": "WiFi 扫描、连接和 ping 测试",
   "module": "wifi",
+  "precheck": true,
+  "required_interfaces": {
+    "wifi": {
+      "select": "auto",
+      "required": true
+    }
+  },
   "functions": [
     {
       "name": "test_wifi",
       "params": {
         "ssid": "SEEED-MKT",
-        "password": "edgemaker2023"
+        "password": "edgemaker2023",
+        "interface": "${interfaces.wifi}"
       },
       "enabled": false,
       "note": "根据实际需要配置 WiFi SSID 和密码"

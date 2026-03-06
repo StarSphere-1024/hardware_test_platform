@@ -2,6 +2,7 @@
   "case_name": "Audio Test",
   "description": "音频录音和播放测试",
   "module": "audio",
+  "precheck": true,
   "functions": [
     {
       "name": "test_audio",

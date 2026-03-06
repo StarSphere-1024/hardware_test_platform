@@ -33,6 +33,8 @@ import argparse
 import glob
 import json
 import os
+import shutil
+import subprocess
 import time
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -72,12 +74,6 @@ DEFAULT_40PIN_MAPPING: Dict[int, int] = {
 }
 
 
-def _default_mapping_file() -> Path:
-    """Get default 40Pin mapping config file path."""
-    # test_gpio.py -> gpio -> functions -> project_root
-    return Path(__file__).resolve().parents[2] / "config" / "gpio_40pin_mapping.json"
-
-
 def _normalize_mapping(raw_mapping: Dict[Any, Any]) -> Dict[int, int]:
     """Normalize JSON/object mapping keys and values to int."""
     normalized: Dict[int, int] = {}
@@ -86,11 +82,179 @@ def _normalize_mapping(raw_mapping: Dict[Any, Any]) -> Dict[int, int]:
     return normalized
 
 
+def _chip_name_to_index(chip_name: str) -> Optional[int]:
+    """Convert gpiochip name like gpiochip3 to integer index."""
+    if not chip_name.startswith("gpiochip"):
+        return None
+    try:
+        return int(chip_name.replace("gpiochip", ""))
+    except ValueError:
+        return None
+
+
+def _list_gpio_chips() -> List[str]:
+    """List gpiochip device names sorted by numeric index."""
+    chips = [Path(path).name for path in glob.glob("/dev/gpiochip*")]
+    unique_chips = sorted(set(chips))
+    return sorted(
+        unique_chips,
+        key=lambda name: _chip_name_to_index(name) if _chip_name_to_index(name) is not None else 10**9,
+    )
+
+
+def _resolve_gpio_target(pin: int) -> tuple[Optional[str], int, int]:
+    """Resolve requested pin to target chip, chip line offset, and global gpio number."""
+    chips = _list_gpio_chips()
+    if not chips:
+        return None, pin, pin
+
+    # Prefer global GPIO numbering (e.g. 52 => gpiochip1 line 20)
+    if pin >= 32:
+        target_chip = f"gpiochip{pin // 32}"
+        if target_chip in chips:
+            return target_chip, pin % 32, pin
+
+    preferred_chip: Optional[str] = None
+    candidates = get_profile_value("gpio.chip_candidates", default=[])
+    if isinstance(candidates, list):
+        for candidate in candidates:
+            candidate_name = str(candidate)
+            if candidate_name in chips:
+                preferred_chip = candidate_name
+                break
+
+    if preferred_chip is None:
+        preferred_chip = "gpiochip0" if "gpiochip0" in chips else chips[0]
+
+    chip_index = _chip_name_to_index(preferred_chip)
+    global_pin = pin if chip_index is None else chip_index * 32 + pin
+    return preferred_chip, pin, global_pin
+
+
+def _load_board_gpio_targets() -> List[Dict[str, Any]]:
+    """Load board-defined GPIO test targets.
+
+    Priority:
+      1) gpio.test_targets
+      2) gpio.physical_to_logical
+      3) gpio.logical_pins
+    """
+    configured_targets = get_profile_value("gpio.test_targets", default=[])
+    normalized_targets: List[Dict[str, Any]] = []
+
+    if isinstance(configured_targets, list):
+        for index, item in enumerate(configured_targets, start=1):
+            if isinstance(item, dict):
+                if item.get("enabled", True):
+                    normalized_targets.append(item.copy())
+            elif isinstance(item, int):
+                normalized_targets.append({"pin": item, "label": f"GPIO_{item}"})
+        if normalized_targets:
+            return normalized_targets
+
+    profile_mapping = get_profile_value("gpio.physical_to_logical", default={})
+    if isinstance(profile_mapping, dict) and profile_mapping:
+        mapping = _normalize_mapping(profile_mapping)
+        return [
+            {
+                "physical_pin": physical_pin,
+                "pin": gpio_number,
+                "label": f"PIN_{physical_pin}",
+            }
+            for physical_pin, gpio_number in sorted(mapping.items())
+        ]
+
+    logical_pins = get_profile_value("gpio.logical_pins", default=[])
+    if isinstance(logical_pins, list):
+        return [
+            {"pin": int(item), "label": f"GPIO_{int(item)}"}
+            for item in logical_pins
+            if isinstance(item, (int, str)) and str(item).isdigit()
+        ]
+
+    return []
+
+
+def _test_single_gpio(
+    pin: int,
+    mode: str = "output",
+    value: Optional[int] = None,
+    timeout: int = 10,
+    details_seed: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Test a single logical/global GPIO pin."""
+    start_time = time.time()
+    details: Dict[str, Any] = {
+        "pin": pin,
+        "mode": mode,
+        "value": value,
+    }
+    if details_seed:
+        details.update(details_seed)
+
+    # Resolve GPIO target from board profile + requested pin
+    gpio_chip, gpio_line, gpio_global = _resolve_gpio_target(pin)
+    if not gpio_chip:
+        return {
+            "code": -101,  # DEVICE_NOT_FOUND
+            "message": "GPIO chip not found",
+            "details": details,
+        }
+
+    details["gpio_chip"] = gpio_chip
+    details["gpio_line"] = gpio_line
+    details["gpio_global"] = gpio_global
+
+    # Check if gpiochip device exists
+    gpiochip_device = f"/dev/{gpio_chip}"
+    if not os.path.exists(gpiochip_device):
+        # Try using sysfs GPIO (older method)
+        gpio_sysfs = f"/sys/class/gpio/gpio{gpio_global}"
+        if not os.path.exists(gpio_sysfs):
+            # Try to export the GPIO
+            try:
+                with open("/sys/class/gpio/export", "w") as f:
+                    f.write(str(gpio_global))
+                time.sleep(0.1)  # Wait for export
+            except Exception:
+                pass
+
+        if not os.path.exists(gpio_sysfs):
+            return {
+                "code": -101,
+                "message": f"GPIO pin {gpio_global} not accessible",
+                "details": details,
+            }
+
+    # Try to use lgpio first, then gpiod CLI, then sysfs
+    try:
+        import lgpio
+        result = _test_gpio_lgpiod(gpio_chip, gpio_line, mode, value, details)
+    except ImportError:
+        result = _test_gpio_gpiod_cli(gpio_chip, gpio_line, mode, value, details)
+        if result["code"] == -2:
+            # Final fallback to sysfs method
+            result = _test_gpio_sysfs(gpio_global, mode, value, details)
+
+    if result["code"] != 0:
+        return result
+
+    duration = time.time() - start_time
+
+    return {
+        "code": 0,  # SUCCESS
+        "message": f"GPIO {pin} test passed",
+        "duration": round(duration, 2),
+        "details": details,
+    }
+
+
 def test_gpio(
     pin: int,
     mode: str = "output",
     value: Optional[int] = None,
     timeout: int = 10,
+    test_all: bool = False,
 ) -> Dict[str, Any]:
     """
     Test GPIO functionality.
@@ -106,63 +270,86 @@ def test_gpio(
     Returns:
         Dictionary with code, message, and details
     """
-    start_time = time.time()
-    details: Dict[str, Any] = {
-        "pin": pin,
-        "mode": mode,
-        "value": value,
-    }
+    if not test_all:
+        return _test_single_gpio(pin=pin, mode=mode, value=value, timeout=timeout)
 
-    # Check if GPIO is available
-    gpio_chip = find_gpio_chip()
-    if not gpio_chip:
+    start_time = time.time()
+    targets = _load_board_gpio_targets()
+    if not targets:
         return {
-            "code": -101,  # DEVICE_NOT_FOUND
-            "message": "GPIO chip not found",
-            "details": details,
+            "code": -101,
+            "message": "No GPIO test targets configured in board profile",
+            "details": {
+                "mode": mode,
+                "value": value,
+            },
         }
 
-    details["gpio_chip"] = gpio_chip
+    results: List[Dict[str, Any]] = []
+    passed = 0
+    failed = 0
 
-    # Check if gpiochip device exists
-    gpiochip_device = f"/dev/{gpio_chip}"
-    if not os.path.exists(gpiochip_device):
-        # Try using sysfs GPIO (older method)
-        gpio_sysfs = f"/sys/class/gpio/gpio{pin}"
-        if not os.path.exists(gpio_sysfs):
-            # Try to export the GPIO
-            try:
-                with open("/sys/class/gpio/export", "w") as f:
-                    f.write(str(pin))
-                time.sleep(0.1)  # Wait for export
-            except Exception:
-                pass
+    for index, target in enumerate(targets, start=1):
+        target_label = str(target.get("label") or f"target_{index}")
+        target_mode = str(target.get("mode", mode))
+        target_value = target.get("value", value)
 
-        if not os.path.exists(gpio_sysfs):
-            return {
-                "code": -101,
-                "message": f"GPIO pin {pin} not accessible",
-                "details": details,
+        if "physical_pin" in target:
+            physical_pin = int(target["physical_pin"])
+            single_result = test_40pin_gpio(
+                pin=physical_pin,
+                mode=target_mode,
+                value=target_value,
+                timeout=timeout,
+            )
+        elif "pin" in target:
+            logical_pin = int(target["pin"])
+            single_result = _test_single_gpio(
+                pin=logical_pin,
+                mode=target_mode,
+                value=target_value,
+                timeout=timeout,
+                details_seed={"label": target_label},
+            )
+        else:
+            single_result = {
+                "code": -1,
+                "message": f"Invalid GPIO target config: {target}",
+                "details": {"label": target_label},
             }
 
-    # Try to use libgpiod first (modern method)
-    try:
-        import lgpio
-        result = _test_gpio_lgpiod(pin, mode, value, details)
-    except ImportError:
-        # Fallback to sysfs method
-        result = _test_gpio_sysfs(pin, mode, value, details)
-
-    if result["code"] != 0:
-        return result
+        success = single_result.get("code", -1) == 0
+        passed += 1 if success else 0
+        failed += 0 if success else 1
+        results.append(
+            {
+                "label": target_label,
+                "success": success,
+                "code": single_result.get("code", -1),
+                "message": single_result.get("message", "Unknown error"),
+                "details": single_result.get("details", {}),
+            }
+        )
 
     duration = time.time() - start_time
+    code = 0 if failed == 0 else -1
+    message = (
+        f"GPIO batch test passed: {passed}/{len(results)} targets accessible"
+        if failed == 0
+        else f"GPIO batch test failed: {passed} passed, {failed} failed"
+    )
 
     return {
-        "code": 0,  # SUCCESS
-        "message": f"GPIO {pin} test passed",
+        "code": code,
+        "message": message,
         "duration": round(duration, 2),
-        "details": details,
+        "details": {
+            "test_all": True,
+            "target_count": len(results),
+            "passed_count": passed,
+            "failed_count": failed,
+            "results": results,
+        },
     }
 
 
@@ -176,6 +363,16 @@ def _test_gpio_sysfs(
     gpio_dir = f"/sys/class/gpio/gpio{pin}"
 
     try:
+        # Export GPIO if not yet exported
+        if not os.path.exists(gpio_dir):
+            try:
+                with open("/sys/class/gpio/export", "w") as f:
+                    f.write(str(pin))
+                time.sleep(0.05)
+                details["sysfs_exported"] = True
+            except Exception as export_error:
+                details["sysfs_export_error"] = str(export_error)
+
         # Set direction
         direction_file = f"{gpio_dir}/direction"
         if os.path.exists(direction_file):
@@ -232,8 +429,73 @@ def _test_gpio_sysfs(
     }
 
 
+def _test_gpio_gpiod_cli(
+    chip_name: str,
+    line: int,
+    mode: str,
+    value: Optional[int],
+    details: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Test GPIO using gpiod command-line tools as fallback."""
+    gpioset = shutil.which("gpioset")
+    gpioget = shutil.which("gpioget")
+
+    if not gpioset or not gpioget:
+        return {
+            "code": -2,
+            "message": "gpioset/gpioget not installed",
+            "details": details,
+        }
+
+    try:
+        if mode == "output" and value is not None:
+            set_cmd = [gpioset, chip_name, f"{line}={value}"]
+            set_res = subprocess.run(set_cmd, capture_output=True, text=True)
+            if set_res.returncode != 0:
+                return {
+                    "code": -102,
+                    "message": f"gpiod set failed: {set_res.stderr.strip() or set_res.stdout.strip()}",
+                    "details": details,
+                }
+            details["value_set"] = value
+
+        get_cmd = [gpioget, chip_name, str(line)]
+        get_res = subprocess.run(get_cmd, capture_output=True, text=True)
+        if get_res.returncode != 0:
+            return {
+                "code": -102,
+                "message": f"gpiod get failed: {get_res.stderr.strip() or get_res.stdout.strip()}",
+                "details": details,
+            }
+
+        read_text = get_res.stdout.strip()
+        read_value = int(read_text) if read_text in {"0", "1"} else read_text
+        details["value_read"] = read_value
+        details["backend"] = "gpiod_cli"
+
+        if mode == "output" and value is not None and isinstance(read_value, int) and read_value != value:
+            return {
+                "code": -1,
+                "message": f"GPIO value mismatch: expected {value}, got {read_value}",
+                "details": details,
+            }
+    except Exception as error:
+        return {
+            "code": -102,
+            "message": f"gpiod CLI operation failed: {error}",
+            "details": details,
+        }
+
+    return {
+        "code": 0,
+        "message": "Success",
+        "details": details,
+    }
+
+
 def _test_gpio_lgpiod(
-    pin: int,
+    chip_name: str,
+    line: int,
     mode: str,
     value: Optional[int],
     details: Dict[str, Any],
@@ -242,18 +504,26 @@ def _test_gpio_lgpiod(
     try:
         import lgpio
 
+        chip_index = _chip_name_to_index(chip_name)
+        if chip_index is None:
+            return {
+                "code": -102,
+                "message": f"Invalid gpio chip name: {chip_name}",
+                "details": details,
+            }
+
         # Open chip
-        chip = lgpio.gpiochip_open(0)
+        chip = lgpio.gpiochip_open(chip_index)
 
         # Request line
-        lgpio.gpio_request_one(chip, pin, lgpio.LG_SET_OUTPUT if mode == "output" else lgpio.LG_SET_INPUT)
+        lgpio.gpio_request_one(chip, line, lgpio.LG_SET_OUTPUT if mode == "output" else lgpio.LG_SET_INPUT)
 
         if mode == "output" and value is not None:
-            lgpio.gpio_write(chip, pin, value)
+            lgpio.gpio_write(chip, line, value)
             details["value_set"] = value
 
             # Verify
-            read_value = lgpio.gpio_read(chip, pin)
+            read_value = lgpio.gpio_read(chip, line)
             details["value_read"] = read_value
 
             if read_value != value:
@@ -265,7 +535,7 @@ def _test_gpio_lgpiod(
                 }
 
         elif mode == "input":
-            read_value = lgpio.gpio_read(chip, pin)
+            read_value = lgpio.gpio_read(chip, line)
             details["value_read"] = read_value
 
         lgpio.gpiochip_close(chip)
@@ -350,8 +620,7 @@ def get_40pin_gpio_mapping(mapping_file: Optional[str] = None) -> Dict[int, int]
       1) mapping_file argument
       2) environment variable GPIO_40PIN_MAPPING_FILE
             3) board profile: gpio.physical_to_logical
-            4) config/gpio_40pin_mapping.json (backward compatibility)
-            5) built-in default mapping
+            4) built-in default mapping
 
     Returns:
         Dictionary mapping physical pin numbers to GPIO numbers
@@ -367,23 +636,23 @@ def get_40pin_gpio_mapping(mapping_file: Optional[str] = None) -> Dict[int, int]
             except Exception as error:
                 print(f"[WARN] Invalid board profile GPIO mapping: {error}, fallback to legacy/default mapping")
 
-    mapping_path = Path(configured_file) if configured_file else _default_mapping_file()
+    if configured_file:
+        mapping_path = Path(configured_file)
+        try:
+            if mapping_path.exists():
+                with open(mapping_path, "r", encoding="utf-8") as file:
+                    config = json.load(file)
 
-    try:
-        if mapping_path.exists():
-            with open(mapping_path, "r", encoding="utf-8") as file:
-                config = json.load(file)
+                if isinstance(config, dict) and "mapping" in config and isinstance(config["mapping"], dict):
+                    return _normalize_mapping(config["mapping"])
+                if isinstance(config, dict):
+                    return _normalize_mapping(config)
 
-            if isinstance(config, dict) and "mapping" in config and isinstance(config["mapping"], dict):
-                return _normalize_mapping(config["mapping"])
-            if isinstance(config, dict):
-                return _normalize_mapping(config)
-
-            print(f"[WARN] Invalid mapping format in {mapping_path}, fallback to default mapping")
-        else:
-            print(f"[WARN] Mapping file not found: {mapping_path}, fallback to default mapping")
-    except Exception as error:
-        print(f"[WARN] Failed to load mapping file {mapping_path}: {error}, fallback to default mapping")
+                print(f"[WARN] Invalid mapping format in {mapping_path}, fallback to default mapping")
+            else:
+                print(f"[WARN] Mapping file not found: {mapping_path}, fallback to default mapping")
+        except Exception as error:
+            print(f"[WARN] Failed to load mapping file {mapping_path}: {error}, fallback to default mapping")
 
     return DEFAULT_40PIN_MAPPING.copy()
 
@@ -433,7 +702,7 @@ def test_40pin_gpio(
     # Add 40Pin context to result
     result["details"]["physical_pin"] = pin
     result["details"]["gpio_number"] = gpio_number
-    result["details"]["mapping_file"] = mapping_file or os.getenv("GPIO_40PIN_MAPPING_FILE") or str(_default_mapping_file())
+    result["details"]["mapping_file"] = mapping_file or os.getenv("GPIO_40PIN_MAPPING_FILE") or "board_profile_or_builtin_default"
 
     return result
 
@@ -449,8 +718,8 @@ def main():
     parser.add_argument(
         "--pin",
         type=int,
-        required=True,
-        help="GPIO pin number (required)",
+        required=False,
+        help="GPIO pin number (required unless --test-all is used)",
     )
     parser.add_argument(
         "--mode",
@@ -522,6 +791,12 @@ def main():
         default=None,
         help="40Pin mapping config file path (JSON)",
     )
+    parser.add_argument(
+        "--test-all",
+        "--all",
+        action="store_true",
+        help="Test all GPIO targets defined by board profile",
+    )
 
     args = parser.parse_args()
 
@@ -536,6 +811,9 @@ def main():
             print(f"  Pin {phys_pin:2d} -> GPIO {gpio}")
         return 0
 
+    if not args.list and not args.test_all and args.pin is None:
+        parser.error("--pin is required unless --test-all is used")
+
     # Run test
     if args.pin_40:
         # Use 40Pin header mapping
@@ -549,10 +827,11 @@ def main():
     else:
         # Use standard GPIO
         result = test_gpio(
-            pin=args.pin,
+            pin=args.pin or 0,
             mode=args.mode,
             value=args.value,
             timeout=args.timeout,
+            test_all=args.test_all,
         )
 
     # Print result

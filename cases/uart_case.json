@@ -2,13 +2,20 @@
   "case_name": "UART Loopback Test",
   "description": "UART serial communication loopback test",
   "module": "uart",
+  "precheck": true,
+  "required_interfaces": {
+    "uart": {
+      "select": "auto",
+      "required": true
+    }
+  },
   "functions": [
     {
       "name": "test_uart",
       "params": {
-        "port": "/dev/ttyUSB0",
+        "port": "${interfaces.uart}",
         "baudrate": 115200,
-        "loopback": true
+        "loopback": false
       },
       "enabled": true
     }

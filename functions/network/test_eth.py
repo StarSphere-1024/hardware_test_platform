@@ -194,11 +194,13 @@ def _detect_interface() -> str:
     except Exception:
         pass
 
-    # Fallback: try board-profile interface candidates
-    candidates = get_profile_value(
-        "network.interface_candidates",
-        default=["eth0", "enp0s3", "eno1", "wlan0"],
-    )
+    # Fallback: try board-profile interface candidates (new schema first)
+    candidates = get_profile_value("interfaces.eth", default=None)
+    if not candidates:
+        candidates = get_profile_value(
+            "network.interface_candidates",
+            default=["eth0", "enp0s3", "eno1", "wlan0"],
+        )
     if not isinstance(candidates, list):
         candidates = ["eth0", "enp0s3", "eno1", "wlan0"]
 

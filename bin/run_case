@@ -34,7 +34,7 @@ def main():
     parser.add_argument(
         "--config",
         type=str,
-        required=True,
+        required=False,
         help="Path to case JSON configuration file",
     )
     parser.add_argument(
@@ -81,6 +81,9 @@ def main():
             for case_file in glob.glob(os.path.join(cases_dir, "*.json")):
                 print(f"  {os.path.basename(case_file)}")
         return 0
+
+    if not args.config:
+        parser.error("the following arguments are required: --config")
 
     # Run case
     logger.info(f"Running case: {args.config}")

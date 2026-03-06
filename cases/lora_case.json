@@ -2,6 +2,7 @@
   "case_name": "LoRa Module Test",
   "description": "LoRa 模块检测和通信测试",
   "module": "lora",
+  "precheck": true,
   "functions": [
     {
       "name": "test_lora",

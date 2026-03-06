@@ -2,11 +2,18 @@
   "case_name": "BLE Bluetooth Test",
   "description": "BLE 蓝牙适配器检测和扫描测试",
   "module": "ble",
+  "precheck": true,
+  "required_interfaces": {
+    "ble": {
+      "select": "auto",
+      "required": true
+    }
+  },
   "functions": [
     {
       "name": "test_ble",
       "params": {
-        "adapter": "hci0",
+        "adapter": "${interfaces.ble}",
         "scan": true
       },
       "enabled": true,

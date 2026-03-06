@@ -24,6 +24,19 @@ export REMOTE_DIR=/home/seeed/hardware_test
 python remote-hardware-testing/scripts/deploy_test_platform.py
 ```
 
+GPIO/权限相关测试在必要时可切换 root：
+
+```bash
+python remote-hardware-testing/scripts/deploy_test_platform.py --as-root
+remote-hardware-testing/scripts/run_single_case.sh --as-root gpio_case
+```
+
+如需复用远程已有环境（跳过重建 venv、重装依赖与重装 wheel），使用：
+
+```bash
+python remote-hardware-testing/scripts/deploy_test_platform.py --fast-reuse
+```
+
 3. 逐个执行 case（建议按模块顺序）。
 
 ```bash
@@ -49,6 +62,7 @@ remote-hardware-testing/scripts/fetch_reports.sh
 ## 工作流（固定顺序）
 
 1. 执行 `deploy_test_platform.py` 完成离线打包与远程部署。
+	- 快速复测可使用 `deploy_test_platform.py --fast-reuse`，仅同步工作区代码。
 2. 使用 `run_single_case.sh` 按模块逐个跑 `cases/*_case.json`。
 3. 使用 `check_remote_status.sh` 与 `fetch_reports.sh` 检查 `reports/`、`tmp/` 与 `logs/`。
 4. 修复本地 `functions/*/test_*.py` 或 `cases/*.json`，然后重复部署和单项验证。

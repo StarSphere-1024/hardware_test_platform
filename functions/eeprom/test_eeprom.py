@@ -488,7 +488,14 @@ def main():
                 print(f"  {key}:")
                 print(f"    status: {value.get('status', 'N/A')}")
                 if "data" in value:
-                    print(f"    data: {value.get('data', 'N/A')[:50]}...")
+                    data_value = value.get("data")
+                    if isinstance(data_value, str):
+                        print(f"    data: {data_value[:50]}...")
+                    elif data_value is None:
+                        print("    data: N/A")
+                    else:
+                        text_data = str(data_value)
+                        print(f"    data: {text_data[:50]}...")
             elif key == "write_test" and isinstance(value, dict):
                 print(f"  {key}:")
                 print(f"    status: {value.get('status', 'N/A')}")

@@ -2,6 +2,7 @@
   "case_name": "4G Module Test",
   "description": "4G LTE 模块检测和网络连接测试",
   "module": "4g",
+  "precheck": true,
   "functions": [
     {
       "name": "test_4g",

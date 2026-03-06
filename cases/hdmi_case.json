@@ -2,6 +2,7 @@
   "case_name": "HDMI/DP Display Test",
   "description": "HDMI/DP 显示输出测试",
   "module": "hdmi",
+  "precheck": true,
   "functions": [
     {
       "name": "test_hdmi",

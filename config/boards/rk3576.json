@@ -2,18 +2,31 @@
   "profile_name": "rk3576",
   "description": "RK3576 board profile example; adjust interfaces and pin mapping based on actual board schematic",
   "supported_cases": [
+    "4g_case",
+    "audio_case",
+    "ble_case",
+    "csi_case",
+    "dsi_case",
+    "eeprom_case",
     "eth_case",
+    "fan_case",
     "gpio_case",
+    "hailo_case",
+    "hdmi_case",
+    "i2c_case",
+    "lora_case",
+    "maskrom_case",
     "rtc_case",
+    "ssd_case",
+    "uart_case",
+    "usb_case",
     "wifi_case",
-    "csi_case"
+    "wifi_halo_case"
   ],
   "interfaces": {
     "eth": [
       "end0",
-      "eth0",
-      "enx36a90538c5e3",
-      "wlan0"
+      "eth0"
     ],
     "wifi": [
       "wlan0"
@@ -22,12 +35,12 @@
       "hci0"
     ],
     "uart": [
+      "/dev/ttyS4",
       "/dev/ttyS0",
       "/dev/ttyFIQ0"
     ],
     "rtc": [
       "/dev/rtc0",
-      "/dev/rtc",
       "/sys/class/rtc/rtc0"
     ],
     "i2c": [
@@ -35,33 +48,66 @@
       "/dev/i2c-2"
     ]
   },
-  "gpio_mapping": {
-    "3": 2,
-    "5": 3,
-    "7": 4,
-    "8": 14,
-    "10": 15,
-    "11": 17,
-    "12": 18,
-    "13": 27,
-    "15": 22,
-    "16": 23,
-    "18": 24,
-    "19": 10,
-    "21": 9,
-    "22": 25,
-    "23": 11,
-    "24": 8,
-    "26": 7,
-    "29": 5,
-    "31": 6,
-    "32": 12,
-    "33": 13,
-    "35": 19,
-    "36": 16,
-    "37": 26,
-    "38": 20,
-    "40": 21
+  "gpio": {
+    "chip_candidates": [
+      "gpiochip0",
+      "gpiochip1",
+      "gpiochip2",
+      "gpiochip3",
+      "gpiochip4",
+      "gpiochip7"
+    ],
+    "test_targets": [
+      {"label": "PIN_7", "physical_pin": 7, "mode": "input"},
+      {"label": "PIN_8", "physical_pin": 8, "mode": "input"},
+      {"label": "PIN_10", "physical_pin": 10, "mode": "input"},
+      {"label": "PIN_11", "physical_pin": 11, "mode": "input"},
+      {"label": "PIN_13", "physical_pin": 13, "mode": "input"},
+      {"label": "PIN_15", "physical_pin": 15, "mode": "input"},
+      {"label": "PIN_19", "physical_pin": 19, "mode": "input"},
+      {"label": "PIN_21", "physical_pin": 21, "mode": "input"},
+      {"label": "PIN_22", "physical_pin": 22, "mode": "input"},
+      {"label": "PIN_23", "physical_pin": 23, "mode": "input"},
+      {"label": "PIN_24", "physical_pin": 24, "mode": "input"},
+      {"label": "PIN_26", "physical_pin": 26, "mode": "input"},
+      {"label": "PIN_28", "physical_pin": 28, "mode": "input"},
+      {"label": "PIN_29", "physical_pin": 29, "mode": "input"},
+      {"label": "PIN_31", "physical_pin": 31, "mode": "input"},
+      {"label": "PIN_32", "physical_pin": 32, "mode": "input"},
+      {"label": "PIN_35", "physical_pin": 35, "mode": "input"},
+      {"label": "PIN_37", "physical_pin": 37, "mode": "input"},
+      {"label": "PIN_38", "physical_pin": 38, "mode": "input"}
+    ],
+    "physical_to_logical": {
+      "3": 55,
+      "5": 54,
+      "7": 51,
+      "8": 28,
+      "10": 29,
+      "11": 52,
+      "12": 57,
+      "13": 80,
+      "15": 53,
+      "16": 78,
+      "18": 79,
+      "19": 45,
+      "21": 46,
+      "22": 95,
+      "23": 44,
+      "24": 47,
+      "26": 48,
+      "27": 151,
+      "28": 150,
+      "29": 98,
+      "31": 49,
+      "32": 61,
+      "33": 50,
+      "35": 58,
+      "36": 60,
+      "37": 99,
+      "38": 59,
+      "40": 56
+    }
   },
   "capabilities": {
     "supports_csi": true,

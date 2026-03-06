@@ -6,9 +6,11 @@ This script will NOT download dependencies from network. It only uses local
 dependency artifacts from `wheels/` or `wheels_source/`.
 
 Usage:
-    python package_and_deploy_offline.py <host> <user> <password> [remote_dir]
+    python scripts/package_and_deploy_offline.py <host> <user> <password> [remote_dir]
+    python scripts/package_and_deploy_offline.py <host> <user> <password> [remote_dir] --skip-venv --skip-deps
 """
 
+import argparse
 import os
 import subprocess
 import sys
@@ -142,7 +144,17 @@ def build_package():
     return None
 
 
-def deploy_package(host: str, user: str, password: str, wheel_path: Path, dependency_files: list[Path], remote_dir: str):
+def deploy_package(
+    host: str,
+    user: str,
+    password: str,
+    wheel_path: Path | None,
+    dependency_files: list[Path],
+    remote_dir: str,
+    skip_venv: bool = False,
+    skip_deps: bool = False,
+    skip_package_install: bool = False,
+):
     """Deploy package and dependencies to remote host."""
     os.environ['SSHPASS'] = password
 
@@ -155,54 +167,78 @@ def deploy_package(host: str, user: str, password: str, wheel_path: Path, depend
     try:
         # Create remote directory
         print(f"Creating remote directory: {remote_dir}...")
+        mkdir_cmd = f'mkdir -p {remote_dir}'
+        if not skip_deps:
+            mkdir_cmd += f' {remote_dir}/local_deps'
         subprocess.run([
             'sshpass', '-e', 'ssh',
             '-o', 'StrictHostKeyChecking=no',
             '-o', 'ConnectTimeout=5',
             f'{user}@{host}',
-            f'mkdir -p {remote_dir} {remote_dir}/local_deps'
+            mkdir_cmd
         ], check=True)
 
         # Upload main package
-        print(f"Uploading package: {wheel_path.name}...")
-        subprocess.run([
-            'sshpass', '-e', 'scp',
-            '-o', 'StrictHostKeyChecking=no',
-            '-o', 'ConnectTimeout=5',
-            str(wheel_path),
-            f'{user}@{host}:{remote_dir}/'
-        ], check=True)
-
-        # Upload local dependencies
-        print("Uploading local dependencies...")
-        wheel_count = 0
-        for wheel in dependency_files:
-            print(f"  Uploading {wheel.name}...")
+        if not skip_package_install:
+            if not wheel_path:
+                print("[ERROR] wheel_path is required when package installation is enabled")
+                return False
+            print(f"Uploading package: {wheel_path.name}...")
             subprocess.run([
                 'sshpass', '-e', 'scp',
                 '-o', 'StrictHostKeyChecking=no',
                 '-o', 'ConnectTimeout=5',
-                str(wheel),
-                f'{user}@{host}:{remote_dir}/local_deps/'
+                str(wheel_path),
+                f'{user}@{host}:{remote_dir}/'
             ], check=True)
-            wheel_count += 1
+        else:
+            print("Skipping package upload/install (--skip-package-install)")
 
-        print(f"Uploaded {wheel_count} files")
+        # Upload local dependencies
+        if not skip_deps:
+            print("Uploading local dependencies...")
+            wheel_count = 0
+            for wheel in dependency_files:
+                print(f"  Uploading {wheel.name}...")
+                subprocess.run([
+                    'sshpass', '-e', 'scp',
+                    '-o', 'StrictHostKeyChecking=no',
+                    '-o', 'ConnectTimeout=5',
+                    str(wheel),
+                    f'{user}@{host}:{remote_dir}/local_deps/'
+                ], check=True)
+                wheel_count += 1
 
-        # Create virtual environment on remote
-        print("Creating virtual environment on remote...")
-        result = subprocess.run([
-            'sshpass', '-e', 'ssh',
-            '-o', 'StrictHostKeyChecking=no',
-            f'{user}@{host}',
-            f'python3 -m venv {venv_path}'
-        ], capture_output=True, text=True)
+            print(f"Uploaded {wheel_count} dependency files")
+        else:
+            print("Skipping dependency upload/install (--skip-deps)")
 
-        if result.returncode != 0:
-            print(f"Failed to create venv: {result.stderr}")
-            return False
+        # Create/reuse virtual environment on remote
+        if not skip_venv:
+            print("Creating virtual environment on remote...")
+            result = subprocess.run([
+                'sshpass', '-e', 'ssh',
+                '-o', 'StrictHostKeyChecking=no',
+                f'{user}@{host}',
+                f'python3 -m venv {venv_path}'
+            ], capture_output=True, text=True)
 
-        print("Virtual environment created!")
+            if result.returncode != 0:
+                print(f"Failed to create venv: {result.stderr}")
+                return False
+
+            print("Virtual environment created!")
+        else:
+            print("Reusing existing virtual environment (--skip-venv)")
+            result = subprocess.run([
+                'sshpass', '-e', 'ssh',
+                '-o', 'StrictHostKeyChecking=no',
+                f'{user}@{host}',
+                f'test -x {venv_path}/bin/python'
+            ], capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"[ERROR] Remote venv not found at {venv_path}. Remove --skip-venv or create it first.")
+                return False
 
         # Install build tools on remote (if needed)
         print("Checking for build tools on remote...")
@@ -217,44 +253,49 @@ def deploy_package(host: str, user: str, password: str, wheel_path: Path, depend
         print(f"GCC available: {has_gcc}")
 
         # Install dependencies from local artifacts only (offline)
-        print("Installing dependencies from local artifacts (offline)...")
-        dep_install_cmd = (
-            f'{venv_path}/bin/pip install --no-index --find-links={remote_dir}/local_deps '
-            f'--no-cache-dir --no-build-isolation ' + " ".join(DEPENDENCIES)
-        )
-        result = subprocess.run([
-            'sshpass', '-e', 'ssh',
-            '-o', 'StrictHostKeyChecking=no',
-            f'{user}@{host}',
-            dep_install_cmd
-        ], capture_output=True, text=True, timeout=300)
+        if not skip_deps:
+            print("Installing dependencies from local artifacts (offline)...")
+            dep_install_cmd = (
+                f'{venv_path}/bin/pip install --no-index --find-links={remote_dir}/local_deps '
+                f'--no-cache-dir --no-build-isolation ' + " ".join(DEPENDENCIES)
+            )
+            result = subprocess.run([
+                'sshpass', '-e', 'ssh',
+                '-o', 'StrictHostKeyChecking=no',
+                f'{user}@{host}',
+                dep_install_cmd
+            ], capture_output=True, text=True, timeout=300)
 
-        if result.returncode != 0:
-            print("[ERROR] Local dependency install failed (no network download allowed)")
-            print(f"Error: {result.stderr[:500]}")
-            print(f"Output: {result.stdout[:500]}")
-            return False
-        else:
-            print("Dependencies installed!")
+            if result.returncode != 0:
+                print("[ERROR] Local dependency install failed (no network download allowed)")
+                print(f"Error: {result.stderr[:500]}")
+                print(f"Output: {result.stdout[:500]}")
+                return False
+            else:
+                print("Dependencies installed!")
 
         # Install the main package
-        print(f"Installing hardware_test_platform...")
-        result = subprocess.run([
-            'sshpass', '-e', 'ssh',
-            '-o', 'StrictHostKeyChecking=no',
-            f'{user}@{host}',
-            f'{venv_path}/bin/pip install --no-deps {remote_dir}/{wheel_path.name}'
-        ], capture_output=True, text=True)
+        if not skip_package_install:
+            if not wheel_path:
+                print("[ERROR] wheel_path is required when package installation is enabled")
+                return False
+            print("Installing hardware_test_platform...")
+            result = subprocess.run([
+                'sshpass', '-e', 'ssh',
+                '-o', 'StrictHostKeyChecking=no',
+                f'{user}@{host}',
+                f'{venv_path}/bin/pip install --no-deps {remote_dir}/{wheel_path.name}'
+            ], capture_output=True, text=True)
 
-        if result.returncode != 0:
-            print(f"Failed to install package: {result.stderr}")
-            return False
+            if result.returncode != 0:
+                print(f"Failed to install package: {result.stderr}")
+                return False
 
-        print("Package installed!")
+            print("Package installed!")
 
         # Deploy test files
-        print("Deploying test files (functions, cases, fixtures)...")
-        for dir_name in ['functions', 'cases', 'fixtures']:
+        print("Deploying workspace files (framework, functions, cases, fixtures, config, bin)...")
+        for dir_name in ['framework', 'functions', 'cases', 'fixtures', 'config', 'bin']:
             local_dir = Path(dir_name)
             if local_dir.exists():
                 print(f"  Deploying {dir_name}...")
@@ -338,29 +379,70 @@ def deploy_package(host: str, user: str, password: str, wheel_path: Path, depend
 
 
 def main():
-    if len(sys.argv) < 4:
-        print("Usage: package_and_deploy_offline.py <host> <user> <password> [remote_dir]")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(
+        description="Offline deploy package to remote board with optional reuse mode"
+    )
+    parser.add_argument("host")
+    parser.add_argument("user")
+    parser.add_argument("password")
+    parser.add_argument("remote_dir", nargs="?", default="/home/seeed/hardware_test")
+    parser.add_argument(
+        "--skip-venv",
+        action="store_true",
+        help="Reuse existing remote venv, skip 'python3 -m venv'",
+    )
+    parser.add_argument(
+        "--skip-deps",
+        action="store_true",
+        help="Skip dependency upload and pip install from local_deps",
+    )
+    parser.add_argument(
+        "--skip-package-install",
+        action="store_true",
+        help="Skip wheel build/upload/install, only sync workspace files",
+    )
+    parser.add_argument(
+        "--fast-reuse",
+        action="store_true",
+        help="Shortcut: --skip-venv --skip-deps --skip-package-install",
+    )
 
-    host = sys.argv[1]
-    user = sys.argv[2]
-    password = sys.argv[3]
-    remote_dir = sys.argv[4] if len(sys.argv) > 4 else '/home/seeed/hardware_test'
+    args = parser.parse_args()
 
-    # Build package
-    wheel_path = build_package()
-    if not wheel_path:
-        print("Build failed!")
-        sys.exit(1)
+    skip_venv = args.skip_venv or args.fast_reuse
+    skip_deps = args.skip_deps or args.fast_reuse
+    skip_package_install = args.skip_package_install or args.fast_reuse
 
-    # Prepare local dependencies only (no download)
-    dependency_files = prepare_local_dependencies()
-    if not dependency_files:
-        print("Local dependency preparation failed!")
-        sys.exit(1)
+    wheel_path: Path | None = None
+    if not skip_package_install:
+        wheel_path = build_package()
+        if not wheel_path:
+            print("Build failed!")
+            sys.exit(1)
+    else:
+        print("Skipping wheel build (--skip-package-install or --fast-reuse)")
+
+    dependency_files: list[Path] = []
+    if not skip_deps:
+        dependency_files = prepare_local_dependencies()
+        if not dependency_files:
+            print("Local dependency preparation failed!")
+            sys.exit(1)
+    else:
+        print("Skipping local dependency preparation (--skip-deps or --fast-reuse)")
 
     # Deploy to remote
-    success = deploy_package(host, user, password, wheel_path, dependency_files, remote_dir)
+    success = deploy_package(
+        args.host,
+        args.user,
+        args.password,
+        wheel_path,
+        dependency_files,
+        args.remote_dir,
+        skip_venv=skip_venv,
+        skip_deps=skip_deps,
+        skip_package_install=skip_package_install,
+    )
     sys.exit(0 if success else 1)
 
 

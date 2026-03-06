@@ -2,6 +2,7 @@
   "case_name": "CSI Camera Test",
   "description": "MIPI CSI 摄像头检测和图像采集测试",
   "module": "csi",
+  "precheck": true,
   "functions": [
     {
       "name": "test_csi",

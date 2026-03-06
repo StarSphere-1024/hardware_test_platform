@@ -2,10 +2,19 @@
   "case_name": "RTC Test",
   "description": "RTC 实时时钟设置和读取测试",
   "module": "rtc",
+  "precheck": true,
+  "required_interfaces": {
+    "rtc": {
+      "select": "auto",
+      "required": true
+    }
+  },
   "functions": [
     {
       "name": "test_rtc",
-      "params": {},
+      "params": {
+        "rtc_device": "${interfaces.rtc}"
+      },
       "enabled": true,
       "note": "无需参数，自动读取和验证 RTC"
     }

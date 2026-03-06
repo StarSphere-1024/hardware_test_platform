@@ -2,26 +2,16 @@
   "case_name": "GPIO Test",
   "description": "GPIO 引脚控制和读取测试",
   "module": "gpio",
+  "precheck": true,
   "functions": [
     {
       "name": "test_gpio",
       "params": {
-        "pin": 17,
-        "mode": "output",
-        "value": 1
+        "test_all": true,
+        "mode": "input"
       },
       "enabled": true,
-      "note": "基础 GPIO 测试"
-    },
-    {
-      "name": "test_40pin_gpio",
-      "params": {
-        "pin": 11,
-        "mode": "output",
-        "value": 1
-      },
-      "enabled": false,
-      "note": "40Pin 排针 GPIO 测试 (物理引脚 11 -> GPIO17)"
+      "note": "按板级配置批量测试所有可测 GPIO 引脚"
     }
   ],
   "execution": "sequential",

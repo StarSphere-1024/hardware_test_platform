@@ -319,7 +319,10 @@ def main():
     if "details" in result:
         for key, value in result["details"].items():
             if isinstance(value, list):
-                print(f"  {key}: {', '.join(value)}")
+                if all(isinstance(item, str) for item in value):
+                    print(f"  {key}: {', '.join(value)}")
+                else:
+                    print(f"  {key}: {value}")
             else:
                 print(f"  {key}: {value}")
 

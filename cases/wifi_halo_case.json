@@ -2,11 +2,19 @@
   "case_name": "WiFi Halow Test",
   "description": "WiFi Halow (802.11ah) 模块检测和连接测试",
   "module": "wifi_halo",
+  "precheck": true,
+  "required_interfaces": {
+    "wifi": {
+      "select": "auto",
+      "required": true
+    }
+  },
   "functions": [
     {
       "name": "test_wifi_halo",
       "params": {
-        "connect_test": false
+        "connect_test": false,
+        "interface": "${interfaces.wifi}"
       },
       "enabled": true,
       "note": "检测 WiFi Halow 模块"

@@ -2,6 +2,13 @@
   "case_name": "EEPROM Test",
   "description": "I2C EEPROM 读写测试",
   "module": "eeprom",
+  "precheck": true,
+  "required_interfaces": {
+    "i2c": {
+      "select": "auto",
+      "required": true
+    }
+  },
   "functions": [
     {
       "name": "test_eeprom",

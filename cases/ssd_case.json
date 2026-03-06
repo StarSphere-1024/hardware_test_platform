@@ -2,6 +2,7 @@
   "case_name": "SSD Speed Test",
   "description": "SSD 设备检测和速度测试",
   "module": "ssd",
+  "precheck": true,
   "functions": [
     {
       "name": "test_ssd",
